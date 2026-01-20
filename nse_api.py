@@ -2,73 +2,116 @@ import requests
 import json
 from datetime import datetime
 import time
+import random
 
 class NSEOptionChain:
     """Fetches Nifty option chain data from NSE"""
     
     def __init__(self):
-        self.base_url = "https://www.nseindia.com/api/option-chain-indices"
+        self.base_url = "https://www.nseindia.com"
+        self.session = None
+        self._create_session()
+    
+    def _create_session(self):
+        """Create a new session with proper headers"""
+        self.session = requests.Session()
+        
+        # Randomize user agent to avoid detection
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ]
+        
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
+            'User-Agent': random.choice(user_agents),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
-            'Referer': 'https://www.nseindia.com/option-chain',
-            'X-Requested-With': 'XMLHttpRequest',
             'Connection': 'keep-alive',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0',
+            'DNT': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1'
         }
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
-        self.cookies_initialized = False
         
-        # Initialize session
-        self._initialize_session()
-    
-    def _initialize_session(self):
-        """Initialize session by visiting NSE homepage to get cookies"""
+        self.session.headers.update(self.headers)
+        
+        # Initialize cookies by visiting homepage
         try:
             print("Initializing NSE session...")
-            # Visit homepage to get cookies
-            response = self.session.get('https://www.nseindia.com', timeout=10)
+            response = self.session.get(f'{self.base_url}/', timeout=10)
+            
             if response.status_code == 200:
-                self.cookies_initialized = True
-                print("✓ NSE session initialized successfully")
-                time.sleep(1)  # Small delay after initialization
+                print("✓ NSE session initialized")
+                time.sleep(2)  # Wait for cookies to settle
+                return True
             else:
-                print(f"⚠ NSE homepage returned status: {response.status_code}")
+                print(f"⚠ NSE homepage returned: {response.status_code}")
+                return False
         except Exception as e:
-            print(f"⚠ Error initializing NSE session: {str(e)}")
+            print(f"⚠ Session init error: {str(e)}")
+            return False
     
-    def _refresh_session(self):
-        """Refresh session if needed"""
-        try:
-            self.session = requests.Session()
-            self.session.headers.update(self.headers)
-            self._initialize_session()
-        except Exception as e:
-            print(f"Error refreshing session: {str(e)}")
+    def _make_request(self, url, max_retries=3):
+        """Make HTTP request with retries"""
+        for attempt in range(max_retries):
+            try:
+                # Update headers for API call
+                api_headers = self.headers.copy()
+                api_headers.update({
+                    'Accept': '*/*',
+                    'Referer': f'{self.base_url}/option-chain',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin'
+                })
+                
+                response = self.session.get(url, headers=api_headers, timeout=15)
+                
+                if response.status_code == 200:
+                    return response
+                elif response.status_code in [401, 403]:
+                    print(f"⚠ Access denied (attempt {attempt + 1}/{max_retries}), refreshing session...")
+                    self._create_session()
+                    time.sleep(3)
+                else:
+                    print(f"⚠ Status {response.status_code} (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(2)
+                    
+            except requests.exceptions.Timeout:
+                print(f"⚠ Timeout (attempt {attempt + 1}/{max_retries})")
+                time.sleep(2)
+            except Exception as e:
+                print(f"⚠ Request error: {str(e)} (attempt {attempt + 1}/{max_retries})")
+                time.sleep(2)
+        
+        return None
     
     def get_nifty_spot_price(self):
         """Get current Nifty spot price"""
         try:
-            if not self.cookies_initialized:
-                self._initialize_session()
+            url = f"{self.base_url}/api/allIndices"
+            response = self._make_request(url)
             
-            url = "https://www.nseindia.com/api/allIndices"
-            response = self.session.get(url, timeout=10)
-            
-            if response.status_code == 200:
-                data = response.json()
-                for index in data.get('data', []):
-                    if index.get('index') == 'NIFTY 50':
-                        spot_price = float(index.get('last', 0))
-                        print(f"✓ Nifty Spot: ₹{spot_price:.2f}")
-                        return spot_price
-            else:
-                print(f"⚠ Failed to fetch Nifty spot. Status: {response.status_code}")
-                
+            if response and response.status_code == 200:
+                try:
+                    data = response.json()
+                    for index in data.get('data', []):
+                        if index.get('index') == 'NIFTY 50':
+                            spot_price = float(index.get('last', 0))
+                            if spot_price > 0:
+                                print(f"✓ Nifty Spot: ₹{spot_price:.2f}")
+                                return spot_price
+                except json.JSONDecodeError as e:
+                    print(f"⚠ JSON decode error for spot price: {str(e)}")
+                except Exception as e:
+                    print(f"⚠ Error parsing spot price: {str(e)}")
+                    
         except Exception as e:
             print(f"Error fetching Nifty spot: {str(e)}")
         
@@ -82,73 +125,64 @@ class NSEOptionChain:
         """Get the nearest weekly expiry date"""
         try:
             expiry_dates = data.get('records', {}).get('expiryDates', [])
-            if expiry_dates:
-                return expiry_dates[0]  # First expiry is usually the nearest weekly
-        except:
-            pass
+            if expiry_dates and len(expiry_dates) > 0:
+                # First expiry is usually the nearest weekly
+                return expiry_dates[0]
+        except Exception as e:
+            print(f"⚠ Error getting expiry: {str(e)}")
         return None
     
     def get_option_chain(self):
         """Fetch option chain data for Nifty weekly options (ATM ± 5 strikes)"""
-        max_retries = 3
-        retry_count = 0
-        
-        while retry_count < max_retries:
+        try:
+            # Get Nifty spot price first
+            spot_price = self.get_nifty_spot_price()
+            if not spot_price:
+                print("⚠ Could not fetch spot price")
+                return None
+            
+            # Small delay between requests
+            time.sleep(1)
+            
+            # Fetch option chain
+            url = f"{self.base_url}/api/option-chain-indices?symbol=NIFTY"
+            response = self._make_request(url)
+            
+            if not response or response.status_code != 200:
+                print("⚠ Could not fetch option chain")
+                return None
+            
             try:
-                # Ensure session is initialized
-                if not self.cookies_initialized:
-                    self._initialize_session()
-                
-                # Get Nifty spot price
-                spot_price = self.get_nifty_spot_price()
-                if not spot_price:
-                    print("⚠ Could not fetch spot price, retrying...")
-                    retry_count += 1
-                    time.sleep(2)
-                    continue
-                
-                # Small delay before fetching option chain
-                time.sleep(1)
-                
-                # Fetch option chain
-                url = f"{self.base_url}?symbol=NIFTY"
-                response = self.session.get(url, timeout=15)
-                
-                if response.status_code == 401 or response.status_code == 403:
-                    print("⚠ Session expired, refreshing...")
-                    self._refresh_session()
-                    retry_count += 1
-                    time.sleep(2)
-                    continue
-                
-                if response.status_code != 200:
-                    print(f"⚠ NSE API returned status {response.status_code}, retrying...")
-                    retry_count += 1
-                    time.sleep(2)
-                    continue
-                
                 data = response.json()
-                
-                # Get weekly expiry
-                weekly_expiry = self.get_weekly_expiry(data)
-                if not weekly_expiry:
-                    print("⚠ Could not find weekly expiry")
-                    retry_count += 1
-                    time.sleep(2)
-                    continue
-                
-                # Calculate ATM strike
-                atm_strike = self.get_atm_strike(spot_price)
-                print(f"✓ ATM Strike: {atm_strike}")
-                
-                # Get strikes to scan (ATM ± 5)
-                strikes_to_scan = [atm_strike + (i * 50) for i in range(-5, 6)]
-                
-                # Parse option data
-                options = []
-                records = data.get('records', {}).get('data', [])
-                
-                for record in records:
+            except json.JSONDecodeError as e:
+                print(f"⚠ JSON decode error: {str(e)}")
+                print(f"Response text: {response.text[:200]}")  # Print first 200 chars
+                return None
+            
+            # Get weekly expiry
+            weekly_expiry = self.get_weekly_expiry(data)
+            if not weekly_expiry:
+                print("⚠ Could not find weekly expiry")
+                return None
+            
+            # Calculate ATM strike
+            atm_strike = self.get_atm_strike(spot_price)
+            print(f"✓ ATM Strike: {atm_strike}")
+            print(f"✓ Weekly Expiry: {weekly_expiry}")
+            
+            # Get strikes to scan (ATM ± 5)
+            strikes_to_scan = [atm_strike + (i * 50) for i in range(-5, 6)]
+            
+            # Parse option data
+            options = []
+            records = data.get('records', {}).get('data', [])
+            
+            if not records:
+                print("⚠ No option records found")
+                return None
+            
+            for record in records:
+                try:
                     strike = record.get('strikePrice')
                     expiry = record.get('expiryDate')
                     
@@ -181,34 +215,23 @@ class NSEOptionChain:
                                     'oi': pe_data.get('openInterest', 0),
                                     'expiry': expiry
                                 })
-                
-                if len(options) > 0:
-                    print(f"✓ Fetched {len(options)} options successfully")
-                    return {
-                        'spot_price': spot_price,
-                        'atm_strike': atm_strike,
-                        'expiry': weekly_expiry,
-                        'options': options,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                else:
-                    print("⚠ No option data found, retrying...")
-                    retry_count += 1
-                    time.sleep(2)
+                except Exception as e:
+                    # Skip problematic records
                     continue
+            
+            if len(options) > 0:
+                print(f"✓ Fetched {len(options)} options successfully")
+                return {
+                    'spot_price': spot_price,
+                    'atm_strike': atm_strike,
+                    'expiry': weekly_expiry,
+                    'options': options,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                print("⚠ No valid option data found")
+                return None
                 
-            except requests.exceptions.Timeout:
-                print(f"⚠ Request timeout (attempt {retry_count + 1}/{max_retries})")
-                retry_count += 1
-                time.sleep(3)
-            except requests.exceptions.ConnectionError:
-                print(f"⚠ Connection error (attempt {retry_count + 1}/{max_retries})")
-                retry_count += 1
-                time.sleep(3)
-            except Exception as e:
-                print(f"⚠ Error fetching option chain: {str(e)} (attempt {retry_count + 1}/{max_retries})")
-                retry_count += 1
-                time.sleep(3)
-        
-        print("❌ Failed to fetch option chain after all retries")
-        return None
+        except Exception as e:
+            print(f"❌ Error in get_option_chain: {str(e)}")
+            return None
