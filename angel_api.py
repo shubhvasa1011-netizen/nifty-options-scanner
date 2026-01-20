@@ -19,12 +19,14 @@ class AngelOneAPI:
         self._login()
     
     def _generate_totp(self):
-        """Generate TOTP for login"""
+        """Generate TOTP automatically from secret"""
         try:
             totp = pyotp.TOTP(self.totp_secret)
-            return totp.now()
+            totp_code = totp.now()
+            print(f"✓ TOTP generated: {totp_code}")
+            return totp_code
         except Exception as e:
-            print(f"Error generating TOTP: {str(e)}")
+            print(f"❌ Error generating TOTP: {str(e)}")
             return None
     
     def _login(self):
@@ -35,7 +37,7 @@ class AngelOneAPI:
             # Initialize SmartAPI
             self.smart_api = SmartConnect(api_key=self.api_key)
             
-            # Generate TOTP
+            # Generate TOTP automatically
             totp = self._generate_totp()
             if not totp:
                 print("❌ Failed to generate TOTP")
@@ -66,11 +68,11 @@ class AngelOneAPI:
         """Get current Nifty 50 spot price"""
         try:
             # Nifty 50 token for NSE
-            nifty_token = "99926000"  # NSE Nifty 50 token
+            nifty_token = "99926000"
             
             ltp_data = self.smart_api.ltpData(
                 exchange="NSE",
-                tradingsymbol="NIFTY 50",
+                tradingsymbol="Nifty 50",
                 symboltoken=nifty_token
             )
             
@@ -95,7 +97,6 @@ class AngelOneAPI:
         Generate option symbol for Angel One
         Format: NIFTY23JAN26C23500 or NIFTY23JAN26P23500
         """
-        # Convert expiry date format: "23-Jan-2026" to "23JAN26"
         try:
             date_obj = datetime.strptime(expiry_date, "%d-%b-%Y")
             expiry_str = date_obj.strftime("%d%b%y").upper()
@@ -108,8 +109,6 @@ class AngelOneAPI:
     
     def get_weekly_expiry(self):
         """Get nearest weekly expiry for Nifty"""
-        # You can hardcode this or fetch from Angel One
-        # For now, let's use a simple logic
         from datetime import datetime, timedelta
         
         today = datetime.now()
@@ -171,13 +170,13 @@ class AngelOneAPI:
                                         'strike': strike,
                                         'type': 'CE',
                                         'ltp': ltp,
-                                        'volume': 0,  # Angel One doesn't provide volume in LTP
+                                        'volume': 0,
                                         'oi': 0,
                                         'expiry': weekly_expiry,
                                         'symbol': ce_symbol
                                     })
                     except Exception as e:
-                        print(f"⚠ Error fetching {ce_symbol}: {str(e)}")
+                        pass
                 
                 # Put option
                 pe_symbol = self._get_option_symbol(strike, "PE", weekly_expiry)
@@ -207,7 +206,7 @@ class AngelOneAPI:
                                         'symbol': pe_symbol
                                     })
                     except Exception as e:
-                        print(f"⚠ Error fetching {pe_symbol}: {str(e)}")
+                        pass
                 
                 # Small delay to avoid rate limiting
                 time.sleep(0.1)
